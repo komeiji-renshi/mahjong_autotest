@@ -148,6 +148,8 @@ def build_bot(game_cfg: dict, device_cfg: dict, level_timeout_sec_override: floa
         min_tiles_for_action=game_cfg.get("runtime", {}).get("min_tiles_for_action", 20),
         watchdog_timeout_sec=game_cfg.get("runtime", {}).get("watchdog_timeout_sec", 30.0),
         watchdog_no_progress_actions=game_cfg.get("runtime", {}).get("watchdog_no_progress_actions", 30),
+        hint_trigger_no_progress_actions=game_cfg.get("runtime", {}).get("hint_trigger_no_progress_actions", 10),
+        hint_wait_sec=game_cfg.get("runtime", {}).get("hint_wait_sec", 0.35),
     )
     return GameRunner(controller=controller, level_runner=level_runner, state_machine=state_machine)
 

@@ -106,6 +106,9 @@ class WebController:
             self._require_page().mouse.click(x, y)
 
     def keyevent(self, keycode: int) -> None:
+        if keycode == 1001:
+            self._click_hint_button()
+            return
         key_map = {4: "Escape", 66: "Enter"}
         key = key_map.get(keycode)
         if key is None:
@@ -117,6 +120,29 @@ class WebController:
             self._log.warning("Page lost during keyevent, reconnecting and retrying once.")
             self._recover_page()
             self._require_page().keyboard.press(key)
+
+    def _click_hint_button(self) -> None:
+        selectors = [
+            "button[title*='显示可能的移动']",
+            "button.feature[title*='可能的移动']",
+            "button:has(span.label:has-text('提示'))",
+            "button:has-text('提示')",
+        ]
+        page = self._require_page()
+        for selector in selectors:
+            try:
+                locator = page.locator(selector).first
+                if locator.count() == 0:
+                    continue
+                if not locator.is_visible():
+                    continue
+                locator.click(timeout=1200)
+                page.wait_for_timeout(220)
+                self._log.info("Clicked hint selector: %s", selector)
+                return
+            except Exception:
+                continue
+        self._log.info("Hint button not found.")
 
     def _perform_startup_clicks(self) -> None:
         page = self._require_page()

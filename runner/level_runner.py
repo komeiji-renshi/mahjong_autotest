@@ -4,6 +4,13 @@ import logging
 import time
 from dataclasses import dataclass
 
+import numpy as np
+
+try:
+    import cv2  # type: ignore
+except ImportError:  # pragma: no cover - optional during bootstrap
+    cv2 = None
+
 from core.controller_protocol import Controller
 from core.state_machine import BotState, StateMachine
 from core.watchdog import ProgressWatchdog
@@ -46,6 +53,8 @@ class LevelRunner:
         min_tiles_for_action: int = 20,
         watchdog_timeout_sec: float = 30.0,
         watchdog_no_progress_actions: int = 30,
+        hint_trigger_no_progress_actions: int = 10,
+        hint_wait_sec: float = 0.35,
     ) -> None:
         self.controller = controller
         self.detector = detector
@@ -66,6 +75,8 @@ class LevelRunner:
         self.min_tiles_for_action = min_tiles_for_action
         self.watchdog_timeout_sec = watchdog_timeout_sec
         self.watchdog_no_progress_actions = watchdog_no_progress_actions
+        self.hint_trigger_no_progress_actions = hint_trigger_no_progress_actions
+        self.hint_wait_sec = hint_wait_sec
         self.log = logging.getLogger("vita_mahjong_bot.level")
 
     def run_one_level(self, max_steps: int = 400) -> LevelResult:
@@ -77,6 +88,7 @@ class LevelRunner:
         failed_pair_centers: list[tuple[tuple[int, int], tuple[int, int]]] = []
         last_board_signature: tuple[tuple[int, int, int, int], ...] | None = None
         same_board_cycles = 0
+        no_progress_streak = 0
         level_start_ts = time.time()
         self.sm.transition(BotState.IN_LEVEL)
         steps = 0
@@ -120,6 +132,7 @@ class LevelRunner:
             if not boxes:
                 self.log.info("No tiles detected on current frame.")
                 watchdog.mark_no_progress_action()
+                no_progress_streak += 1
                 if watchdog.is_stalled():
                     self.sm.transition(BotState.RECOVERING)
                     return LevelResult(success=False, reason="no_tiles_stalled", steps=steps)
@@ -127,6 +140,7 @@ class LevelRunner:
                 continue
             if len(boxes) < self.min_tiles_for_action:
                 watchdog.mark_no_progress_action()
+                no_progress_streak += 1
                 self.log.info(
                     "Skip action due to unstable sparse detection: tiles=%s min_required=%s",
                     len(boxes),
@@ -194,6 +208,15 @@ class LevelRunner:
 
             if action is None:
                 watchdog.mark_no_progress_action()
+                no_progress_streak += 1
+                if no_progress_streak >= self.hint_trigger_no_progress_actions:
+                    if self._attempt_hint_fallback(pre_signature=board_signature):
+                        watchdog.mark_progress()
+                        no_progress_streak = 0
+                        failed_pair_keys.clear()
+                        failed_pair_centers.clear()
+                        steps += 1
+                        continue
                 if watchdog.is_stalled():
                     self.sm.transition(BotState.RECOVERING)
                     return LevelResult(success=False, reason="no_pairs_stalled", steps=steps)
@@ -213,6 +236,7 @@ class LevelRunner:
                 failed_pair_keys.add(pair_key)
                 failed_pair_centers.append(self._pair_centers(action))
                 watchdog.mark_no_progress_action()
+                no_progress_streak += 1
                 self.log.info(
                     "Skip pair (sim=%.3f/%.3f struct=%.3f/%.3f color=%.3f/%.3f mean_color=%.1f/%.1f): %s",
                     similarity,
@@ -228,6 +252,13 @@ class LevelRunner:
                 if watchdog.is_stalled():
                     self.sm.transition(BotState.RECOVERING)
                     return LevelResult(success=False, reason="no_pairs_stalled", steps=steps)
+                if no_progress_streak >= self.hint_trigger_no_progress_actions:
+                    if self._attempt_hint_fallback(pre_signature=board_signature):
+                        watchdog.mark_progress()
+                        no_progress_streak = 0
+                        failed_pair_keys.clear()
+                        failed_pair_centers.clear()
+                        steps += 1
                 continue
             self.log.info(
                 "Trying pair: %s <-> %s (sim=%.3f struct=%.3f color=%.3f mean_color=%.1f)",
@@ -260,6 +291,7 @@ class LevelRunner:
                 failed_pair_keys.add(pair_key)
                 failed_pair_centers.append(self._pair_centers(action))
                 watchdog.mark_no_progress_action()
+                no_progress_streak += 1
                 self.log.info(
                     "Pair had no effect, blocked pair: %s (blocked=%s, still_visible=%s).",
                     pair_key,
@@ -269,9 +301,17 @@ class LevelRunner:
                 if watchdog.is_stalled():
                     self.sm.transition(BotState.RECOVERING)
                     return LevelResult(success=False, reason="no_pairs_stalled", steps=steps)
+                if no_progress_streak >= self.hint_trigger_no_progress_actions:
+                    if self._attempt_hint_fallback(pre_signature=board_signature):
+                        watchdog.mark_progress()
+                        no_progress_streak = 0
+                        failed_pair_keys.clear()
+                        failed_pair_centers.clear()
+                        steps += 1
                 continue
 
             watchdog.mark_progress()
+            no_progress_streak = 0
             last_board_signature = post_signature
             same_board_cycles = 0
 
@@ -320,4 +360,69 @@ class LevelRunner:
             if abs(a[0] - fa[0]) <= tolerance and abs(a[1] - fa[1]) <= tolerance and abs(b[0] - fb[0]) <= tolerance and abs(b[1] - fb[1]) <= tolerance:
                 return True
         return False
+
+    def _attempt_hint_fallback(self, pre_signature: tuple[tuple[int, int, int, int], ...]) -> bool:
+        self.log.info("Trigger hint fallback via hint button.")
+        # Hint may be triggered while state is WAIT_ANIMATION after a previous click.
+        # Normalize back to ANALYZING before issuing hint-driven clicks.
+        self.sm.transition(BotState.ANALYZING)
+        self.controller.keyevent(1001)
+        time.sleep(self.hint_wait_sec)
+        hint_image = self.controller.screencap()
+        hint_boxes = self._detect_hint_red_boxes(hint_image)
+        if len(hint_boxes) < 2:
+            self.log.info("Hint fallback: red hint boxes not found.")
+            return False
+        box_a, box_b = hint_boxes[0], hint_boxes[1]
+        ax = box_a[0] + (box_a[2] // 2)
+        ay = box_a[1] + (box_a[3] // 2)
+        bx = box_b[0] + (box_b[2] // 2)
+        by = box_b[1] + (box_b[3] // 2)
+        self.log.info("Hint fallback tapping red boxes: (%s,%s) and (%s,%s)", ax, ay, bx, by)
+        self.sm.transition(BotState.ACTING)
+        self.controller.tap(ax, ay)
+        self.controller.tap(bx, by)
+        self.sm.transition(BotState.WAIT_ANIMATION)
+        time.sleep(self.animation_wait_sec)
+        post_image = self.controller.screencap()
+        post_boxes = self.detector.detect(post_image)
+        post_signature = self._boxes_signature(post_boxes)
+        changed = post_signature != pre_signature
+        self.log.info("Hint fallback result changed=%s", int(changed))
+        return changed
+
+    @staticmethod
+    def _detect_hint_red_boxes(image: np.ndarray) -> list[tuple[int, int, int, int]]:
+        if cv2 is None:
+            return []
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        lower_red1 = np.array([0, 90, 90], dtype=np.uint8)
+        upper_red1 = np.array([12, 255, 255], dtype=np.uint8)
+        lower_red2 = np.array([168, 90, 90], dtype=np.uint8)
+        upper_red2 = np.array([179, 255, 255], dtype=np.uint8)
+        mask = cv2.inRange(hsv, lower_red1, upper_red1) | cv2.inRange(hsv, lower_red2, upper_red2)
+        kernel = np.ones((3, 3), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        boxes: list[tuple[int, int, int, int, int]] = []
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            area = w * h
+            if area < 900:
+                continue
+            if not (28 <= w <= 120 and 36 <= h <= 150):
+                continue
+            aspect = h / max(1, w)
+            if not (0.7 <= aspect <= 2.8):
+                continue
+            boxes.append((x, y, w, h, area))
+        boxes.sort(key=lambda item: item[4], reverse=True)
+        dedup: list[tuple[int, int, int, int]] = []
+        for x, y, w, h, _ in boxes:
+            cx = x + (w // 2)
+            cy = y + (h // 2)
+            if any(abs(cx - (dx + dw // 2)) <= 18 and abs(cy - (dy + dh // 2)) <= 18 for dx, dy, dw, dh in dedup):
+                continue
+            dedup.append((x, y, w, h))
+        return dedup[:2]
 

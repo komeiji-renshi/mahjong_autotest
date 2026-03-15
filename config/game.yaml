@@ -60,5 +60,7 @@ runtime:
   min_tiles_for_action: 20
   watchdog_timeout_sec: 60
   watchdog_no_progress_actions: 80
+  hint_trigger_no_progress_actions: 12
+  hint_wait_sec: 0.35
 
 debug_dir: "logs/debug"
