@@ -1,0 +1,64 @@
+package_name: "com.vitastudio.mahjong"
+activity_name: ""
+
+ui_threshold: 0.82
+ui_templates:
+  win: "assets/templates/victory.png"
+  fail: "assets/templates/failed.png"
+  popup: "assets/templates/close_btn.png"
+
+tile_detector:
+  method: "hybrid"
+  template_path: "assets/templates/tile_frame.png"
+  template_threshold: 0.84
+  min_tile_w: 38
+  max_tile_w: 95
+  min_tile_h: 40
+  max_tile_h: 130
+  size_templates:
+    - [47, 64]
+    - [49, 65]
+    - [53, 69]
+    - [45, 60]
+    - [57, 74]
+  size_match_tolerance_ratio: 0.55
+  center_dedup_distance: 16
+  min_white_ratio: 0.30
+  white_sat_max: 95
+  white_val_min: 128
+  playfield_left_ratio: 0.12
+  playfield_right_ratio: 0.97
+  playfield_top_ratio: 0.05
+  playfield_bottom_ratio: 0.94
+
+classifier:
+  similarity_threshold: 0.87
+  min_structure_similarity: 0.86
+  min_color_similarity: 0.72
+  structure_weight: 0.7
+  color_weight: 0.3
+  color_hist_bins: 16
+  max_mean_color_distance: 24
+
+matcher:
+  max_pairs_per_class: 24
+
+board:
+  overlap_ratio_threshold: 0.12
+  side_margin_ratio: 0.45
+  same_layer_y_ratio: 0.35
+  min_side_y_overlap_ratio: 0.45
+
+runtime:
+  animation_wait_sec: 0.6
+  level_timeout_sec: 90
+  max_same_board_cycles: 40
+  min_pair_similarity: 0.93
+  min_pair_structure_similarity: 0.94
+  min_pair_color_similarity: 0.88
+  max_pair_mean_color_distance: 24
+  min_tiles_for_action: 20
+  watchdog_timeout_sec: 60
+  watchdog_no_progress_actions: 80
+
+debug_dir: "logs/debug"

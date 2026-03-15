@@ -1,0 +1,22 @@
+platform: "web" # "web" | "pc" | "adb"
+
+# Web mode (HTML5 game)
+web_url: "https://ffalt.github.io/mah/"
+web_browser: "chromium"
+web_headless: false
+web_viewport_width: 1280
+web_viewport_height: 720
+web_startup_click_selectors:
+  - "button.tutorial-btn-primary"
+  - "button.tutorial-btn-skip"
+  - "div.start-links button"
+
+# ADB mode
+adb_path: "adb"
+serial: null
+
+# PC mode (Microsoft Mahjong from Microsoft Store)
+window_title_keyword: "Microsoft Mahjong"
+app_aumid: "Microsoft.MicrosoftMahjong_8wekyb3d8bbwe!App"
+launch_cmd: ""
+process_name: "MicrosoftMahjong.exe"

@@ -1,0 +1,8 @@
+numpy
+opencv-python
+PyYAML
+pytest
+pyautogui
+PyGetWindow
+pywin32
+playwright
